@@ -702,23 +702,61 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   var gridList = document.getElementById("grid-list");
   var postCount = document.getElementById("post-count");
 
+  var FEED_PAGE_SIZE = 15;
+  var GRID_PAGE_SIZE = 30;
+  var allPosts = [];
+  var gridPosts = [];
+  var feedShown = 0;
+  var gridShown = 0;
+
   function renderAll(){
     getAll().then(function(posts){
       revokeAllUrls();
-      renderFeed(posts);
-      renderGrid(posts);
+      allPosts = posts;
+      gridPosts = posts.filter(function(p){ return p.type !== "text"; });
+      postCount.textContent = posts.length + (posts.length === 1 ? " publication" : " publications");
+      feedEmpty.hidden = posts.length !== 0;
+
+      feedShown = 0;
+      feedList.innerHTML = "";
+      renderMoreFeed();
+
+      gridShown = 0;
+      gridList.innerHTML = "";
+      renderMoreGrid();
     });
+  }
+
+  // Ajoute un repère invisible en fin de liste : dès qu'il devient visible
+  // (l'utilisateur approche du bas), on charge le lot suivant automatiquement.
+  function setupSentinel(container, id, shouldContinue, loadMoreFn, spanGrid){
+    var old = document.getElementById(id);
+    if(old) old.remove();
+    if(!shouldContinue) return;
+    var sentinel = document.createElement("div");
+    sentinel.id = id;
+    sentinel.style.height = "1px";
+    if(spanGrid) sentinel.style.gridColumn = "1 / -1";
+    container.appendChild(sentinel);
+    var observer = new IntersectionObserver(function(entries, obs){
+      if(entries[0].isIntersecting){
+        obs.disconnect();
+        loadMoreFn();
+      }
+    }, { rootMargin: "600px" });
+    observer.observe(sentinel);
   }
 
   var editingTextId = null;
 
-  function renderFeed(posts){
-    feedList.innerHTML = "";
-    feedEmpty.hidden = posts.length !== 0;
-    posts.forEach(function(post){
+  function renderMoreFeed(){
+    var next = allPosts.slice(feedShown, feedShown + FEED_PAGE_SIZE);
+    next.forEach(function(post){
       var el = (post.type === "text") ? buildTextPostEl(post) : buildMediaPostEl(post);
       feedList.appendChild(el);
     });
+    feedShown += next.length;
+    setupSentinel(feedList, "feed-sentinel", feedShown < allPosts.length, renderMoreFeed, false);
   }
 
   function buildMediaPostEl(post){
@@ -809,10 +847,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return el;
   }
 
-  function renderGrid(posts){
-    gridList.innerHTML = "";
-    postCount.textContent = posts.length + (posts.length === 1 ? " publication" : " publications");
-    posts.filter(function(p){ return p.type !== "text"; }).forEach(function(post){
+  function renderMoreGrid(){
+    var next = gridPosts.slice(gridShown, gridShown + GRID_PAGE_SIZE);
+    next.forEach(function(post){
       var media = getMediaArray(post);
       if(!media.length) return;
       var first = media[0];
@@ -836,6 +873,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       cell.addEventListener("click", function(){ openDetail(post.id); });
       gridList.appendChild(cell);
     });
+    gridShown += next.length;
+    setupSentinel(gridList, "grid-sentinel", gridShown < gridPosts.length, renderMoreGrid, true);
   }
 
   function toggleFav(post){
