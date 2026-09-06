@@ -1189,9 +1189,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
 
   // Champs techniques que Meta ajoute parfois à côté de la légende dans son export
-  // (appareil photo, position GPS, identifiants...). On les repère par leur libellé
-  // et on saute aussi la ligne suivante (leur valeur) pour ne garder que le vrai texte écrit.
-  var METADATA_LABEL_RE = /^(camera make|camera model|software|scene capture type|upload ip|ip address|latitude|longitude|altitude|gps data|modified timestamp|creation timestamp|original timestamp|taken timestamp|upload timestamp|import timestamp|device id|source type|media metadata|exif data|iptc data|original width|original height|orientation|iso|exposure time|f[ -]?number|focal length|lens model|lens make|backup media|composite media count|post id|media id)\s*:?$/i;
+  // (appareil photo, position GPS, identifiants...). On les repère par leur libellé,
+  // qu'il soit seul sur sa ligne ("Camera Make" puis "Apple" séparément) ou combiné
+  // avec sa valeur sur la même ligne ("Camera Make: Apple").
+  var METADATA_LABELS = "camera make|camera model|software|scene capture type|upload ip|ip address|latitude|longitude|altitude|gps data|modified timestamp|creation timestamp|original timestamp|taken timestamp|upload timestamp|import timestamp|device id|source type|media metadata|exif data|iptc data|original width|original height|orientation|iso|exposure time|f[ -]?number|focal length|lens model|lens make|backup media|composite media count|post id|media id";
+  var METADATA_LABEL_ONLY_RE = new RegExp("^(" + METADATA_LABELS + ")\\s*:?$", "i");
+  var METADATA_COMBINED_RE = new RegExp("^(" + METADATA_LABELS + ")\\s*:\\s*.+$", "i");
 
   function extractTextAndDate(containerEl){
     var doc = containerEl.ownerDocument;
@@ -1205,8 +1208,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     var kept = [];
     for(var idx = 0; idx < lines.length; idx++){
-      if(METADATA_LABEL_RE.test(lines[idx])){
-        idx++; // on saute aussi la valeur associée à ce champ technique
+      if(METADATA_COMBINED_RE.test(lines[idx])){
+        continue; // "Label: valeur" sur une seule ligne : on saute la ligne entière
+      }
+      if(METADATA_LABEL_ONLY_RE.test(lines[idx])){
+        idx++; // le libellé seul : on saute aussi la ligne suivante (sa valeur)
         continue;
       }
       kept.push(lines[idx]);
@@ -1225,7 +1231,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   // Chemins à exclure : messages privés, demandes de suivi, journaux d'appels...
   // (tout ce qui n'est pas une publication faite sur le compte)
-  var EXCLUDED_PATH_RE = /messages|inbox|call_log|contacts|requests|pending/i;
+  var EXCLUDED_PATH_RE = /messages|inbox|call_log|contacts|requests|pending|archived|recently_deleted/i;
 
   function importInstagramZip(file, onProgress){
     return JSZip.loadAsync(file).then(function(zip){
@@ -1275,6 +1281,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
         var total = postGroups.length, imported = 0, skipped = 0, seen = {};
         var baseTs = Date.now();
+        var htmlFileCount = htmlEntries.length, mediaItemCount = items.length;
 
         function nextGroup(i){
           // Petite pause régulière pour laisser Safari respirer (mémoire/rendu)
@@ -1286,7 +1293,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
 
         function processGroup(i){
-          if(i >= postGroups.length) return Promise.resolve({ imported: imported, skipped: skipped, total: total });
+          if(i >= postGroups.length) return Promise.resolve({ imported: imported, skipped: skipped, total: total, htmlFileCount: htmlFileCount, mediaItemCount: mediaItemCount });
           var group = postGroups[i];
           if(onProgress) onProgress(i + 1, total);
 
@@ -1364,11 +1371,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }).then(function(result){
       modalProgress.hidden = true;
       renderAll();
+      var diag = " [" + result.htmlFileCount + " fichier(s) HTML analysé(s), " + result.mediaItemCount + " fichier(s) média détecté(s), " + result.total + " post(s) reconstitué(s)]";
       storageInfo().then(function(info){
         if(result.imported === 0){
-          alert("Aucune photo n'a pu être importée depuis ce fichier. Vérifie qu'il s'agit bien de l'export Instagram au format HTML." + info);
+          alert("Aucune photo n'a pu être importée depuis ce fichier. Vérifie qu'il s'agit bien de l'export Instagram au format HTML." + diag + info);
         } else {
-          alert(result.imported + " post(s) importé(s)" + (result.skipped ? " (" + result.skipped + " ignoré(s))" : "") + "." + info);
+          alert(result.imported + " post(s) importé(s)" + (result.skipped ? " (" + result.skipped + " ignoré(s))" : "") + "." + diag + info);
         }
       });
     }).catch(function(err){
