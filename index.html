@@ -198,8 +198,11 @@
     padding:0 2px;
   }
   .grid-cell{ position:relative; aspect-ratio:1/1; overflow:hidden; background:var(--surface); }
-  .grid-video-placeholder{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted); }
-  .grid-video-placeholder svg{ width:22px; height:22px; }
+  .grid-cell video{ width:100%; height:100%; object-fit:cover; display:block; }
+  .grid-video-placeholder{
+    position:absolute; bottom:5px; left:5px; width:18px; height:18px;
+    color:#fff; filter:drop-shadow(0 0 2px rgba(0,0,0,0.7));
+  }
   .stack-badge{ position:absolute; top:5px; right:5px; width:16px; height:16px; color:#fff; filter:drop-shadow(0 0 2px rgba(0,0,0,0.7)); }
   .grid-cell img{ width:100%; height:100%; object-fit:cover; display:block; }
 
@@ -283,9 +286,11 @@
     font-size:30px; font-weight:300;
   }
   .media-tile{ position:relative; flex:0 0 auto; width:84px; height:84px; border:1px solid var(--line); background:#000; }
-  .media-tile img{ width:100%; height:100%; object-fit:cover; display:block; }
-  .video-placeholder{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted); }
-  .video-placeholder svg{ width:26px; height:26px; }
+  .media-tile img, .media-tile video{ width:100%; height:100%; object-fit:cover; display:block; }
+  .video-badge{
+    position:absolute; bottom:4px; left:4px; width:18px; height:18px;
+    color:#fff; filter:drop-shadow(0 0 2px rgba(0,0,0,0.8));
+  }
   .media-remove{
     position:absolute; top:2px; right:2px; width:20px; height:20px;
     background:rgba(0,0,0,0.65); color:#fff; border:none; font-size:14px; line-height:1;
@@ -783,7 +788,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       var cell = document.createElement("div");
       cell.className = "grid-cell";
       if(first.kind === "video"){
-        cell.innerHTML = '<div class="grid-video-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>';
+        var vUrl = URL.createObjectURL(first.blob);
+        objectUrls.push(vUrl);
+        cell.innerHTML = '<video src="' + vUrl + '" muted playsinline preload="metadata"></video>' +
+          '<div class="grid-video-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>';
       } else {
         var url = URL.createObjectURL(first.blob);
         objectUrls.push(url);
@@ -841,13 +849,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   modeButtons.forEach(function(b){ b.addEventListener("click", function(){ setMode(b.dataset.mode); }); });
   captionInput.addEventListener("input", updatePublishState);
 
+  var VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "avi", "3gp", "webm"];
+
   function renderMediaStrip(){
     Array.prototype.slice.call(mediaStrip.querySelectorAll(".media-tile")).forEach(function(t){ t.remove(); });
     pendingMedia.forEach(function(item, idx){
       var tile = document.createElement("div");
       tile.className = "media-tile";
       if(item.kind === "video"){
-        tile.innerHTML = '<div class="video-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>';
+        var video = document.createElement("video");
+        video.src = item.previewUrl; video.muted = true; video.playsInline = true; video.preload = "metadata";
+        tile.appendChild(video);
+        tile.insertAdjacentHTML("beforeend",
+          '<div class="video-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>'
+        );
       } else {
         tile.innerHTML = '<img src="' + item.previewUrl + '" alt="">';
       }
@@ -883,15 +898,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var files = Array.prototype.slice.call(fileInput.files || []);
     if(!files.length) return;
     Promise.all(files.map(function(file){
-      var isVideo = file.type.indexOf("video") === 0;
-      if(isVideo) return Promise.resolve({ blob:file, kind:"video", previewUrl:null });
+      var ext = (file.name.split(".").pop() || "").toLowerCase();
+      var isVideo = file.type.indexOf("video") === 0 || VIDEO_EXTENSIONS.indexOf(ext) !== -1;
+      if(isVideo){
+        // On repasse par un Blob "propre" (plutôt que le File natif) : certaines
+        // versions de Safari gèrent mal le stockage direct de gros fichiers vidéo en IndexedDB.
+        var videoBlob = new Blob([file], { type: file.type || "video/mp4" });
+        return Promise.resolve({ blob: videoBlob, kind: "video", previewUrl: URL.createObjectURL(videoBlob) });
+      }
       return compressImage(file).then(function(blob){
         return { blob:blob, kind:"image", previewUrl:URL.createObjectURL(blob) };
-      });
+      }).catch(function(){ return null; });
     })).then(function(results){
-      pendingMedia = pendingMedia.concat(results);
+      var valid = results.filter(Boolean);
+      var skipped = results.length - valid.length;
+      pendingMedia = pendingMedia.concat(valid);
       renderMediaStrip();
       updatePublishState();
+      if(skipped){ alert(skipped + " fichier(s) n'ont pas pu être ajoutés (format non pris en charge)."); }
     });
     fileInput.value = "";
   });
@@ -904,6 +928,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     addPost(newPostMode, newPostMode === "media" ? media : null, captionInput.value.trim()).then(function(){
       closeNewSheet();
       renderAll();
+    }).catch(function(){
+      alert("La publication a échoué. Le fichier est peut-être trop volumineux pour l'espace de stockage disponible — essaie avec une vidéo plus légère ou vérifie l'espace libre sur ton iPod.");
+      updatePublishState();
     });
   });
 
@@ -1178,7 +1205,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             if(!isVideo && !isImage) return Promise.resolve(null);
 
             return entry.async("blob").then(function(rawBlob){
-              var mime = isVideo ? "video/mp4" : (ext === "png" ? "image/png" : "image/jpeg");
+              var videoMimeMap = { mp4: "video/mp4", mov: "video/quicktime", m4v: "video/x-m4v" };
+              var mime = isVideo ? (videoMimeMap[ext] || "video/mp4") : (ext === "png" ? "image/png" : "image/jpeg");
               var typedBlob = new Blob([rawBlob], { type: mime });
               if(isImage){
                 return compressImage(typedBlob).then(function(compressed){
