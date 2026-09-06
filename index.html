@@ -93,9 +93,34 @@
     background:var(--surface);
   }
 
-  .post-frame img{ display:block; width:100%; height:auto; }
+  .carousel-wrap{ position:relative; }
+  .carousel{
+    overflow-x:auto;
+    scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .carousel::-webkit-scrollbar{ display:none; }
+  .carousel-track{ display:flex; }
+  .carousel-slide{ flex:0 0 100%; scroll-snap-align:start; }
+  .carousel-slide img, .carousel-slide video{ display:block; width:100%; max-height:560px; object-fit:cover; background:#000; }
 
-  .crop{ position:absolute; width:16px; height:16px; }
+  .carousel-dots{
+    position:absolute; bottom:10px; left:0; right:0;
+    display:flex; justify-content:center; gap:5px;
+  }
+  .carousel-dot{ width:5px; height:5px; border-radius:50%; background:rgba(255,255,255,0.4); }
+  .carousel-dot.active{ background:var(--paper); }
+
+  .frame-expand{
+    position:absolute; top:8px; right:8px; z-index:2;
+    width:30px; height:30px;
+    background:rgba(6,43,22,0.7); color:var(--paper); border:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .frame-expand svg{ width:16px; height:16px; }
+
+  .crop{ position:absolute; width:16px; height:16px; z-index:1; }
   .crop::before, .crop::after{ content:""; position:absolute; background:var(--paper); }
   .crop-tl{ top:-1px; left:-1px; }
   .crop-tl::before{ width:16px; height:2px; top:0; left:0; }
@@ -172,7 +197,10 @@
     gap:2px;
     padding:0 2px;
   }
-  .grid-cell{ aspect-ratio:1/1; overflow:hidden; background:var(--surface); }
+  .grid-cell{ position:relative; aspect-ratio:1/1; overflow:hidden; background:var(--surface); }
+  .grid-video-placeholder{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+  .grid-video-placeholder svg{ width:22px; height:22px; }
+  .stack-badge{ position:absolute; top:5px; right:5px; width:16px; height:16px; color:#fff; filter:drop-shadow(0 0 2px rgba(0,0,0,0.7)); }
   .grid-cell img{ width:100%; height:100%; object-fit:cover; display:block; }
 
   .backup-row{
@@ -247,17 +275,21 @@
   }
   .sheet-inner h2{ font-family:var(--font-display); font-size:17px; margin:0 0 16px; }
 
-  .picker{
+  .media-strip{ display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:14px; }
+  .media-add-tile{
+    flex:0 0 auto; width:84px; height:84px;
+    border:1px dashed var(--line); color:var(--muted);
     display:flex; align-items:center; justify-content:center;
-    height:200px;
-    border:1px dashed var(--line);
-    color:var(--muted);
-    font-size:14px;
-    cursor:pointer;
+    font-size:30px; font-weight:300;
   }
-  .new-preview{ margin-bottom:14px; position:relative; }
-  .new-preview img{ width:100%; max-height:320px; object-fit:cover; display:block; border:1px solid var(--line); }
-  .new-preview.has-image .picker{ display:none; }
+  .media-tile{ position:relative; flex:0 0 auto; width:84px; height:84px; border:1px solid var(--line); background:#000; }
+  .media-tile img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .video-placeholder{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+  .video-placeholder svg{ width:26px; height:26px; }
+  .media-remove{
+    position:absolute; top:2px; right:2px; width:20px; height:20px;
+    background:rgba(0,0,0,0.65); color:#fff; border:none; font-size:14px; line-height:1;
+  }
 
   textarea{
     width:100%;
@@ -293,8 +325,8 @@
 
   .sheet.full{ align-items:stretch; background:var(--bg); }
   .sheet.full .sheet-inner{ display:none; }
-  #modal-detail img{ width:100%; display:block; }
   #modal-detail{ flex-direction:column; overflow-y:auto; }
+  #detail-media .carousel-slide img, #detail-media .carousel-slide video{ max-height:none; }
   .detail-body{ padding:16px 20px calc(20px + env(safe-area-inset-bottom)); }
   .close{
     position:absolute; top:calc(16px + env(safe-area-inset-top)); right:16px;
@@ -318,7 +350,7 @@
   <header class="topbar">
     <div>
       <p class="wordmark">Blueprint</p>
-      <p class="tagline">ta pellicule, rien qu'à toi</p>
+      <p class="tagline">Building my picture on this playground</p>
     </div>
   </header>
 
@@ -357,7 +389,7 @@
       <div class="import-ig-row">
         <button class="link-btn" id="btn-import-ig-trigger">Importer mon export Instagram (.zip)</button>
         <input type="file" id="import-ig-input" accept=".zip" hidden>
-        <p>Demande le format HTML dans "Télécharger vos informations" sur Instagram, puis dépose le fichier .zip reçu ici. Tout est traité sur ton iPod, rien n'est envoyé nulle part.</p>
+        <p>Demande le format HTML dans "Télécharger vos informations" sur Instagram, puis dépose le fichier .zip reçu ici. Photos, vidéos et posts à plusieurs photos sont pris en charge. Tout est traité sur ton iPod, rien n'est envoyé nulle part.</p>
       </div>
     </section>
   </main>
@@ -381,14 +413,13 @@
     <div class="sheet-handle"></div>
     <h2>Nouveau post</h2>
     <div class="mode-toggle">
-      <button class="mode-btn active" id="mode-photo" data-mode="photo">Photo</button>
+      <button class="mode-btn active" id="mode-media" data-mode="media">Média</button>
       <button class="mode-btn" id="mode-text" data-mode="text">Texte</button>
     </div>
-    <div class="new-preview" id="new-preview">
-      <label class="picker" for="file-input">Choisir une photo</label>
-      <img id="preview-img" alt="">
+    <div class="media-strip" id="media-strip">
+      <label class="media-add-tile" for="file-input">+</label>
     </div>
-    <input type="file" id="file-input" accept="image/*" hidden>
+    <input type="file" id="file-input" accept="image/*,video/*" multiple hidden>
     <textarea id="caption-input" placeholder="Ajoute une légende..." maxlength="280"></textarea>
     <div class="sheet-actions">
       <button class="btn ghost" id="btn-cancel">Annuler</button>
@@ -412,7 +443,7 @@
   <button class="close" id="btn-close-detail" aria-label="Fermer">
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 5l14 14M19 5L5 19"/></svg>
   </button>
-  <img id="detail-img" alt="">
+  <div id="detail-media"></div>
   <div class="detail-body">
     <p id="detail-caption"></p>
     <textarea id="detail-caption-input" maxlength="280" hidden placeholder="Ajoute une légende..."></textarea>
@@ -568,6 +599,66 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return new Intl.DateTimeFormat("fr-FR", {day:"numeric", month:"long", year:"numeric", hour:"2-digit", minute:"2-digit"}).format(new Date(ts));
   }
 
+  // Compatibilité : anciens posts avec un seul champ "image" -> tableau media normalisé
+  function getMediaArray(post){
+    if(post.media && post.media.length) return post.media;
+    if(post.image) return [{ blob: post.image, kind: "image" }];
+    return [];
+  }
+
+  // Construit un carrousel (1 ou plusieurs médias). bare=true : sans cadre ni coins (vue détail).
+  function buildMediaFrame(mediaArray, bare){
+    var carousel = document.createElement("div");
+    carousel.className = "carousel";
+    var track = document.createElement("div");
+    track.className = "carousel-track";
+    carousel.appendChild(track);
+
+    mediaArray.forEach(function(m){
+      var url = URL.createObjectURL(m.blob);
+      objectUrls.push(url);
+      var slide = document.createElement("div");
+      slide.className = "carousel-slide";
+      if(m.kind === "video"){
+        var video = document.createElement("video");
+        video.src = url; video.controls = true; video.playsInline = true; video.preload = "metadata";
+        slide.appendChild(video);
+      } else {
+        var img = document.createElement("img");
+        img.src = url; img.alt = "";
+        slide.appendChild(img);
+      }
+      track.appendChild(slide);
+    });
+
+    var wrapper = document.createElement("div");
+    if(bare){
+      wrapper.className = "carousel-wrap";
+      wrapper.appendChild(carousel);
+    } else {
+      wrapper.className = "post-frame";
+      wrapper.appendChild(carousel);
+      wrapper.insertAdjacentHTML("beforeend", '<span class="crop crop-tl"></span><span class="crop crop-br"></span>');
+    }
+
+    if(mediaArray.length > 1){
+      var dots = document.createElement("div");
+      dots.className = "carousel-dots";
+      mediaArray.forEach(function(_, i){
+        var dot = document.createElement("span");
+        dot.className = "carousel-dot" + (i === 0 ? " active" : "");
+        dots.appendChild(dot);
+      });
+      wrapper.appendChild(dots);
+      carousel.addEventListener("scroll", function(){
+        var idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
+        Array.prototype.forEach.call(dots.children, function(d, i){ d.classList.toggle("active", i === idx); });
+      });
+    }
+
+    return wrapper;
+  }
+
   // ---------- Rendu ----------
 
   var feedList = document.getElementById("feed-list");
@@ -589,36 +680,43 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     feedList.innerHTML = "";
     feedEmpty.hidden = posts.length !== 0;
     posts.forEach(function(post){
-      var el = (post.type === "text") ? buildTextPostEl(post) : buildPhotoPostEl(post);
+      var el = (post.type === "text") ? buildTextPostEl(post) : buildMediaPostEl(post);
       feedList.appendChild(el);
     });
   }
 
-  function buildPhotoPostEl(post){
-    var url = URL.createObjectURL(post.image);
-    objectUrls.push(url);
+  function buildMediaPostEl(post){
+    var media = getMediaArray(post);
 
     var el = document.createElement("article");
     el.className = "post";
-    el.innerHTML =
-      '<div class="post-frame">' +
-        '<img src="' + url + '" alt="">' +
-        '<span class="crop crop-tl"></span><span class="crop crop-br"></span>' +
-      '</div>' +
-      (post.caption ? '<p class="post-caption"></p>' : '') +
-      '<div class="post-meta">' +
-        '<span class="post-date">' + fmtDate(post.ts) + '</span>' +
-        '<button class="pin-btn' + (post.fav ? ' active' : '') + '" data-id="' + post.id + '">' +
-          '<svg viewBox="0 0 24 24"><path d="M12 2l1.8 5.6H19l-4.6 3.4 1.8 5.6L12 13.2 7.8 16.6l1.8-5.6L5 8h5.2z" stroke="currentColor" stroke-width="1.4"/></svg>' +
-        '</button>' +
-      '</div>';
 
-    if(post.caption){ el.querySelector(".post-caption").textContent = post.caption; }
-    el.querySelector(".post-frame img").addEventListener("click", function(){ openDetail(post.id); });
-    el.querySelector(".pin-btn").addEventListener("click", function(ev){
-      ev.stopPropagation();
-      toggleFav(post);
-    });
+    var frame = buildMediaFrame(media, false);
+    frame.insertAdjacentHTML("beforeend",
+      '<button class="frame-expand" aria-label="Détails">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H3v6M15 21h6v-6M21 3l-7 7M3 21l7-7"/></svg>' +
+      '</button>'
+    );
+    el.appendChild(frame);
+
+    if(post.caption){
+      var p = document.createElement("p");
+      p.className = "post-caption";
+      p.textContent = post.caption;
+      el.appendChild(p);
+    }
+
+    var meta = document.createElement("div");
+    meta.className = "post-meta";
+    meta.innerHTML =
+      '<span class="post-date">' + fmtDate(post.ts) + '</span>' +
+      '<button class="pin-btn' + (post.fav ? ' active' : '') + '">' +
+        '<svg viewBox="0 0 24 24"><path d="M12 2l1.8 5.6H19l-4.6 3.4 1.8 5.6L12 13.2 7.8 16.6l1.8-5.6L5 8h5.2z" stroke="currentColor" stroke-width="1.4"/></svg>' +
+      '</button>';
+    el.appendChild(meta);
+
+    frame.querySelector(".frame-expand").addEventListener("click", function(){ openDetail(post.id); });
+    meta.querySelector(".pin-btn").addEventListener("click", function(){ toggleFav(post); });
     return el;
   }
 
@@ -679,11 +777,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     gridList.innerHTML = "";
     postCount.textContent = posts.length + (posts.length === 1 ? " publication" : " publications");
     posts.filter(function(p){ return p.type !== "text"; }).forEach(function(post){
-      var url = URL.createObjectURL(post.image);
-      objectUrls.push(url);
+      var media = getMediaArray(post);
+      if(!media.length) return;
+      var first = media[0];
       var cell = document.createElement("div");
       cell.className = "grid-cell";
-      cell.innerHTML = '<img src="' + url + '" alt="">';
+      if(first.kind === "video"){
+        cell.innerHTML = '<div class="grid-video-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>';
+      } else {
+        var url = URL.createObjectURL(first.blob);
+        objectUrls.push(url);
+        cell.innerHTML = '<img src="' + url + '" alt="">';
+      }
+      if(media.length > 1){
+        cell.insertAdjacentHTML("beforeend",
+          '<span class="stack-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1"/><path d="M7 15v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"/></svg></span>'
+        );
+      }
       cell.addEventListener("click", function(){ openDetail(post.id); });
       gridList.appendChild(cell);
     });
@@ -709,35 +819,58 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   var modalNew = document.getElementById("modal-new");
   var fileInput = document.getElementById("file-input");
-  var previewWrap = document.getElementById("new-preview");
-  var previewImg = document.getElementById("preview-img");
+  var mediaStrip = document.getElementById("media-strip");
   var captionInput = document.getElementById("caption-input");
   var btnPublish = document.getElementById("btn-publish");
   var modeButtons = document.querySelectorAll(".mode-btn");
-  var pendingBlob = null;
-  var newPostMode = "photo";
+  var pendingMedia = []; // { blob, kind, previewUrl }
+  var newPostMode = "media";
 
   function setMode(mode){
     newPostMode = mode;
     modeButtons.forEach(function(b){ b.classList.toggle("active", b.dataset.mode === mode); });
-    previewWrap.hidden = (mode === "text");
+    mediaStrip.hidden = (mode === "text");
     captionInput.placeholder = (mode === "text") ? "Quoi de neuf ?" : "Ajoute une légende...";
     updatePublishState();
   }
 
   function updatePublishState(){
-    btnPublish.disabled = (newPostMode === "photo") ? !pendingBlob : !captionInput.value.trim();
+    btnPublish.disabled = (newPostMode === "media") ? (pendingMedia.length === 0) : !captionInput.value.trim();
   }
 
   modeButtons.forEach(function(b){ b.addEventListener("click", function(){ setMode(b.dataset.mode); }); });
   captionInput.addEventListener("input", updatePublishState);
 
+  function renderMediaStrip(){
+    Array.prototype.slice.call(mediaStrip.querySelectorAll(".media-tile")).forEach(function(t){ t.remove(); });
+    pendingMedia.forEach(function(item, idx){
+      var tile = document.createElement("div");
+      tile.className = "media-tile";
+      if(item.kind === "video"){
+        tile.innerHTML = '<div class="video-placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>';
+      } else {
+        tile.innerHTML = '<img src="' + item.previewUrl + '" alt="">';
+      }
+      tile.insertAdjacentHTML("beforeend", '<button class="media-remove" data-idx="' + idx + '">×</button>');
+      mediaStrip.appendChild(tile);
+    });
+    Array.prototype.slice.call(mediaStrip.querySelectorAll(".media-remove")).forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var idx = parseInt(btn.dataset.idx, 10);
+        if(pendingMedia[idx].previewUrl) URL.revokeObjectURL(pendingMedia[idx].previewUrl);
+        pendingMedia.splice(idx, 1);
+        renderMediaStrip();
+        updatePublishState();
+      });
+    });
+  }
+
   function openNewSheet(){
-    pendingBlob = null;
-    previewWrap.classList.remove("has-image");
-    previewImg.src = "";
+    pendingMedia.forEach(function(m){ if(m.previewUrl) URL.revokeObjectURL(m.previewUrl); });
+    pendingMedia = [];
+    renderMediaStrip();
     captionInput.value = "";
-    setMode("photo");
+    setMode("media");
     modalNew.hidden = false;
   }
   function closeNewSheet(){ modalNew.hidden = true; }
@@ -747,21 +880,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   document.getElementById("btn-cancel").addEventListener("click", closeNewSheet);
 
   fileInput.addEventListener("change", function(){
-    var file = fileInput.files[0];
-    if(!file) return;
-    compressImage(file).then(function(blob){
-      pendingBlob = blob;
-      previewImg.src = URL.createObjectURL(blob);
-      previewWrap.classList.add("has-image");
+    var files = Array.prototype.slice.call(fileInput.files || []);
+    if(!files.length) return;
+    Promise.all(files.map(function(file){
+      var isVideo = file.type.indexOf("video") === 0;
+      if(isVideo) return Promise.resolve({ blob:file, kind:"video", previewUrl:null });
+      return compressImage(file).then(function(blob){
+        return { blob:blob, kind:"image", previewUrl:URL.createObjectURL(blob) };
+      });
+    })).then(function(results){
+      pendingMedia = pendingMedia.concat(results);
+      renderMediaStrip();
       updatePublishState();
     });
+    fileInput.value = "";
   });
 
   btnPublish.addEventListener("click", function(){
-    if(newPostMode === "photo" && !pendingBlob) return;
+    if(newPostMode === "media" && !pendingMedia.length) return;
     if(newPostMode === "text" && !captionInput.value.trim()) return;
     btnPublish.disabled = true;
-    addPost(newPostMode, newPostMode === "photo" ? pendingBlob : null, captionInput.value.trim()).then(function(){
+    var media = pendingMedia.map(function(m){ return { blob:m.blob, kind:m.kind }; });
+    addPost(newPostMode, newPostMode === "media" ? media : null, captionInput.value.trim()).then(function(){
       closeNewSheet();
       renderAll();
     });
@@ -770,7 +910,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   // ---------- Détail / lightbox ----------
 
   var modalDetail = document.getElementById("modal-detail");
-  var detailImg = document.getElementById("detail-img");
+  var detailMedia = document.getElementById("detail-media");
   var detailCaption = document.getElementById("detail-caption");
   var detailDate = document.getElementById("detail-date");
   var btnFav = document.getElementById("btn-fav");
@@ -781,9 +921,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     getOne(id).then(function(post){
       currentDetail = post;
       exitEditMode();
-      var url = URL.createObjectURL(post.image);
-      objectUrls.push(url);
-      detailImg.src = url;
+      detailMedia.innerHTML = "";
+      var media = getMediaArray(post);
+      if(media.length){ detailMedia.appendChild(buildMediaFrame(media, true)); }
       detailCaption.textContent = post.caption || "";
       detailCaption.style.display = post.caption ? "" : "none";
       detailDate.textContent = fmtDate(post.ts);
@@ -862,13 +1002,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     getAll().then(function(posts){
       Promise.all(posts.map(function(p){
         if(p.type === "text"){
-          return Promise.resolve({type:"text", caption:p.caption, ts:p.ts, fav:p.fav, image:null});
+          return Promise.resolve({type:"text", caption:p.caption, ts:p.ts, fav:p.fav, media:[]});
         }
-        return blobToBase64(p.image).then(function(b64){
-          return {type:"photo", caption:p.caption, ts:p.ts, fav:p.fav, image:b64};
+        var media = getMediaArray(p);
+        return Promise.all(media.map(function(m){
+          return blobToBase64(m.blob).then(function(b64){ return { kind:m.kind, data:b64 }; });
+        })).then(function(mediaData){
+          return { type:"media", caption:p.caption, ts:p.ts, fav:p.fav, media:mediaData };
         });
       })).then(function(data){
-        var json = JSON.stringify({version:2, posts:data});
+        var json = JSON.stringify({version:3, posts:data});
         var blob = new Blob([json], {type:"application/json"});
         var url = URL.createObjectURL(blob);
         var a = document.createElement("a");
@@ -903,9 +1046,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               req.onsuccess = resolve; req.onerror = reject;
             });
           }
-          return fetch(p.image).then(function(r){ return r.blob(); }).then(function(blob){
+          // Compat anciennes sauvegardes (v1/v2 : un seul champ "image" en base64)
+          var mediaSrc = (p.media && p.media.length) ? p.media : (p.image ? [{kind:"image", data:p.image}] : []);
+          return Promise.all(mediaSrc.map(function(m){
+            return fetch(m.data).then(function(r){ return r.blob(); }).then(function(blob){
+              return { blob:blob, kind: m.kind || "image" };
+            });
+          })).then(function(media){
             return new Promise(function(resolve, reject){
-              var req = tx("readwrite").add({type:"photo", image:blob, caption:p.caption, ts:p.ts, fav:!!p.fav});
+              var req = tx("readwrite").add({type:"media", media:media, caption:p.caption, ts:p.ts, fav:!!p.fav});
               req.onsuccess = resolve; req.onerror = reject;
             });
           });
@@ -920,6 +1069,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     };
     reader.readAsText(file);
   });
+
 
   // ---------- Import export Instagram (.zip, format HTML) ----------
 
@@ -942,14 +1092,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return normalizeZipPath(combined);
   }
 
-  function extractCaptionAndDate(imgEl){
-    var el = imgEl.parentElement, text = "", depth = 0;
-    while(el && depth < 6){
-      text = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if(DATE_RE.test(text)) break;
-      el = el.parentElement;
+  function locateCaptionContainer(el){
+    var cur = el.parentElement, text = "", depth = 0;
+    while(cur && depth < 6){
+      text = (cur.textContent || "").replace(/\s+/g, " ").trim();
+      if(DATE_RE.test(text)) return cur;
+      cur = cur.parentElement;
       depth++;
     }
+    // Pas de date trouvée : on regroupe au niveau du parent direct (repli raisonnable)
+    return el.parentElement || el;
+  }
+
+  function extractTextAndDate(containerEl){
+    var text = (containerEl.textContent || "").replace(/\s+/g, " ").trim();
     var m = text.match(DATE_RE);
     var caption = m ? text.replace(m[0], "").trim() : text;
     var ts = null;
@@ -972,7 +1128,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if(/\.html?$/i.test(relPath)) htmlEntries.push(entry);
       });
 
-      function findImageEntry(basePath, src){
+      function findMediaEntry(basePath, src){
         var resolved = resolveRelativePath(basePath, src);
         if(resolved && lowerIndex[resolved.toLowerCase()]) return lowerIndex[resolved.toLowerCase()];
         var base = src.split("/").pop().toLowerCase().split("?")[0];
@@ -983,43 +1139,68 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return Promise.all(htmlEntries.map(function(entry){
         return entry.async("string").then(function(htmlStr){
           var doc = new DOMParser().parseFromString(htmlStr, "text/html");
-          var imgs = Array.prototype.slice.call(doc.querySelectorAll("img[src]"));
-          return imgs.map(function(img){ return { img: img, basePath: entry.name }; });
+          var els = Array.prototype.slice.call(doc.querySelectorAll("img[src], video[src], video source[src]"));
+          return els.map(function(el){ return { el: el, basePath: entry.name }; });
         });
       })).then(function(groups){
         var items = [].concat.apply([], groups);
-        var total = items.length, imported = 0, skipped = 0, seen = {};
+
+        // Regroupe les médias qui partagent le même bloc légende/date en un seul post (carrousel)
+        var postGroups = [];
+        var groupIndex = new Map();
+        items.forEach(function(item){
+          var container = locateCaptionContainer(item.el);
+          if(!groupIndex.has(container)){
+            var g = { container: container, items: [] };
+            groupIndex.set(container, g);
+            postGroups.push(g);
+          }
+          groupIndex.get(container).items.push(item);
+        });
+
+        var total = postGroups.length, imported = 0, skipped = 0, seen = {};
         var baseTs = Date.now();
 
-        function processNext(i){
-          if(i >= items.length) return Promise.resolve({ imported: imported, skipped: skipped, total: total });
-          var item = items[i];
-          var src = item.img.getAttribute("src");
-          var entry = src ? findImageEntry(item.basePath, src) : null;
+        function processGroup(i){
+          if(i >= postGroups.length) return Promise.resolve({ imported: imported, skipped: skipped, total: total });
+          var group = postGroups[i];
           if(onProgress) onProgress(i + 1, total);
 
-          if(!entry || seen[entry.name]){
-            skipped++;
-            return processNext(i + 1);
-          }
-          seen[entry.name] = true;
+          var mediaPromises = group.items.map(function(item){
+            var src = item.el.getAttribute("src");
+            var entry = src ? findMediaEntry(item.basePath, src) : null;
+            if(!entry || seen[entry.name]) return Promise.resolve(null);
+            seen[entry.name] = true;
 
-          return entry.async("blob").then(function(rawBlob){
             var ext = entry.name.split(".").pop().toLowerCase();
-            if(ext !== "jpg" && ext !== "jpeg" && ext !== "png") throw new Error("not an image");
-            var mime = ext === "png" ? "image/png" : "image/jpeg";
-            var typedBlob = new Blob([rawBlob], { type: mime });
-            return compressImage(typedBlob).then(function(compressed){
-              var meta = extractCaptionAndDate(item.img);
-              var ts = meta.ts || (baseTs - (total - i) * 1000);
-              return addPost("photo", compressed, meta.caption, ts);
-            });
-          }).then(function(){ imported++; })
-            .catch(function(){ skipped++; })
-            .then(function(){ return processNext(i + 1); });
+            var isVideo = ["mp4", "mov", "m4v"].indexOf(ext) !== -1;
+            var isImage = ["jpg", "jpeg", "png"].indexOf(ext) !== -1;
+            if(!isVideo && !isImage) return Promise.resolve(null);
+
+            return entry.async("blob").then(function(rawBlob){
+              var mime = isVideo ? "video/mp4" : (ext === "png" ? "image/png" : "image/jpeg");
+              var typedBlob = new Blob([rawBlob], { type: mime });
+              if(isImage){
+                return compressImage(typedBlob).then(function(compressed){
+                  return { blob: compressed, kind: "image" };
+                });
+              }
+              return { blob: typedBlob, kind: "video" };
+            }).catch(function(){ return null; });
+          });
+
+          return Promise.all(mediaPromises).then(function(mediaResults){
+            var media = mediaResults.filter(Boolean);
+            if(!media.length){ skipped++; return processGroup(i + 1); }
+            var meta = extractTextAndDate(group.container);
+            var ts = meta.ts || (baseTs - (total - i) * 1000);
+            return addPost("media", media, meta.caption, ts).then(function(){
+              imported++;
+            }).catch(function(){ skipped++; }).then(function(){ return processGroup(i + 1); });
+          });
         }
 
-        return processNext(0);
+        return processGroup(0);
       });
     });
   }
@@ -1041,14 +1222,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     importInstagramZip(file, function(current, total){
       var pct = total ? Math.round((current / total) * 100) : 0;
       progressFill.style.width = pct + "%";
-      progressCount.textContent = current + " / " + total + " photos analysées";
+      progressCount.textContent = current + " / " + total + " posts analysés";
     }).then(function(result){
       modalProgress.hidden = true;
       renderAll();
       if(result.imported === 0){
         alert("Aucune photo n'a pu être importée depuis ce fichier. Vérifie qu'il s'agit bien de l'export Instagram au format HTML.");
       } else {
-        alert(result.imported + " photo(s) importée(s)" + (result.skipped ? " (" + result.skipped + " ignorée(s))" : "") + ".");
+        alert(result.imported + " post(s) importé(s)" + (result.skipped ? " (" + result.skipped + " ignoré(s))" : "") + ".");
       }
     }).catch(function(){
       modalProgress.hidden = true;
