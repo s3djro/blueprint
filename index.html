@@ -453,6 +453,12 @@
 (function(){
   "use strict";
 
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("sw.js").catch(function(){});
+    });
+  }
+
   var DB_NAME = "blueprintDB", STORE = "posts", META_STORE = "meta", db = null;
   var objectUrls = [];
 
