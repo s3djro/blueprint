@@ -228,6 +228,22 @@
   .progress-fill{ height:100%; width:0%; background:var(--paper); }
   #progress-count{ font-size:13px; color:var(--muted); }
 
+  .diag-summary{ font-size:13px; color:var(--muted); margin:0 0 12px; line-height:1.5; }
+  .diag-list{
+    max-height:280px; overflow-y:auto;
+    border:1px solid var(--line); margin-bottom:16px;
+  }
+  .diag-row{
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+    padding:8px 10px; border-bottom:1px solid var(--line); font-size:11px;
+  }
+  .diag-row:last-child{ border-bottom:none; }
+  .diag-path{ word-break:break-all; color:var(--paper); }
+  .diag-row.excluded .diag-path{ color:var(--muted); text-decoration:line-through; }
+  .diag-tag{ flex:0 0 auto; font-size:10px; padding:2px 6px; white-space:nowrap; }
+  .diag-row.included .diag-tag{ background:var(--line); color:var(--paper); }
+  .diag-row.excluded .diag-tag{ background:none; color:var(--muted); border:1px solid var(--line); }
+
   /* ---------- Tab bar ---------- */
 
   .tabbar{
@@ -433,6 +449,20 @@
     <div class="sheet-actions">
       <button class="btn ghost" id="btn-cancel">Annuler</button>
       <button class="btn primary" id="btn-publish" disabled>Publier</button>
+    </div>
+  </div>
+</div>
+
+<!-- Diagnostic de structure de l'export -->
+<div class="sheet" id="modal-diag" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-handle"></div>
+    <h2>Structure détectée dans le fichier</h2>
+    <p id="diag-summary" class="diag-summary"></p>
+    <div id="diag-list" class="diag-list"></div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="btn-diag-cancel">Annuler</button>
+      <button class="btn primary" id="btn-diag-continue">Importer</button>
     </div>
   </div>
 </div>
@@ -1157,8 +1187,63 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   // ---------- Import export Instagram (.zip, format HTML) ----------
 
-  // Format de date utilisé par Meta dans ses exports : "15 janv. 2023, 20:32" ou "Jan 15, 2023, 8:32 PM"
-  var DATE_RE = /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-zéû]*\.?\s+\d{1,2},?\s*\d{4},?\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i;
+  // Meta formate les dates selon la langue du compte : anglais ("Jan 15, 2023, 8:32 PM")
+  // ou français ("15 janv. 2023 à 20:32"), entre autres. On gère les deux.
+  var MONTHS_EN = "January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sept|Sep|October|Oct|November|Nov|December|Dec";
+  var MONTHS_FR = "janvier|janv|f[ée]vrier|f[ée]vr|mars|avril|avr|mai|juin|juillet|juil|ao[uû]t|septembre|sept|octobre|oct|novembre|nov|d[ée]cembre|d[ée]c";
+  var FR_MONTH_MAP = {
+    "janvier":0,"janv":0,"fevrier":1,"février":1,"fevr":1,"févr":1,"mars":2,
+    "avril":3,"avr":3,"mai":4,"juin":5,"juillet":6,"juil":6,"aout":7,"août":7,
+    "septembre":8,"sept":8,"octobre":9,"oct":9,"novembre":10,"nov":10,
+    "decembre":11,"décembre":11,"dec":11,"déc":11
+  };
+
+  var DATE_RE_EN = "(?:" + MONTHS_EN + ")[a-z]*\\.?\\s+\\d{1,2},?\\s*\\d{4},?\\s+\\d{1,2}:\\d{2}\\s*(?:AM|PM)?";
+  var DATE_RE_FR = "\\d{1,2}\\s+(?:" + MONTHS_FR + ")\\.?\\s+\\d{4}(?:\\s*(?:,|à|a)?\\s*\\d{1,2}[:h]\\d{2})?";
+  // Format hybride constaté dans les exports réels : mois français mais ordre anglais
+  // ("août 21, 2026 6:44 am") — ni vraiment anglais, ni vraiment français.
+  var DATE_RE_FR_MDY = "(?:" + MONTHS_FR + ")\\.?\\s+\\d{1,2},?\\s*\\d{4}\\s+\\d{1,2}:\\d{2}\\s*(?:am|pm)?";
+  var DATE_RE = new RegExp("(" + DATE_RE_EN + ")|(" + DATE_RE_FR_MDY + ")|(" + DATE_RE_FR + ")", "i");
+  var DATE_FR_PARSE_RE = new RegExp("(\\d{1,2})\\s+(" + MONTHS_FR + ")\\.?\\s+(\\d{4})(?:\\s*(?:,|à|a)?\\s*(\\d{1,2})[:h](\\d{2}))?", "i");
+  var DATE_FR_MDY_PARSE_RE = new RegExp("(" + MONTHS_FR + ")\\.?\\s+(\\d{1,2}),?\\s*(\\d{4})\\s+(\\d{1,2}):(\\d{2})\\s*(am|pm)?", "i");
+
+  function frMonthIndex(name){
+    var key = name.toLowerCase().replace(/û/g, "u").replace(/î/g, "i");
+    return FR_MONTH_MAP[key] !== undefined ? FR_MONTH_MAP[key] : FR_MONTH_MAP[name.toLowerCase()];
+  }
+
+  function parseMatchedDate(str){
+    // Essai 1 : format compris nativement par Date.parse (anglais)
+    var parsed = Date.parse(str.replace(",", ""));
+    if(!isNaN(parsed)) return parsed;
+
+    // Essai 2 : mois français, ordre anglais ("août 21, 2026 6:44 am")
+    var m2 = str.match(DATE_FR_MDY_PARSE_RE);
+    if(m2){
+      var month2 = frMonthIndex(m2[1]);
+      if(month2 !== undefined){
+        var day2 = parseInt(m2[2], 10), year2 = parseInt(m2[3], 10);
+        var hour2 = parseInt(m2[4], 10), minute2 = parseInt(m2[5], 10);
+        var ampm2 = (m2[6] || "").toLowerCase();
+        if(ampm2 === "pm" && hour2 < 12) hour2 += 12;
+        if(ampm2 === "am" && hour2 === 12) hour2 = 0;
+        var d2 = new Date(year2, month2, day2, hour2, minute2);
+        if(!isNaN(d2.getTime())) return d2.getTime();
+      }
+    }
+
+    // Essai 3 : format français jour/mois-en-lettres/année, non compris par Date.parse
+    var m = str.match(DATE_FR_PARSE_RE);
+    if(!m) return null;
+    var day = parseInt(m[1], 10);
+    var month = frMonthIndex(m[2]);
+    if(month === undefined) return null;
+    var year = parseInt(m[3], 10);
+    var hour = m[4] ? parseInt(m[4], 10) : 0;
+    var minute = m[5] ? parseInt(m[5], 10) : 0;
+    var d = new Date(year, month, day, hour, minute);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
 
   function normalizeZipPath(path){
     var parts = path.split("/"), out = [];
@@ -1223,15 +1308,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     var caption = m ? text.replace(m[0], "").trim() : text;
     var ts = null;
     if(m){
-      var parsed = Date.parse(m[0].replace(",", ""));
-      if(!isNaN(parsed)) ts = parsed;
+      ts = parseMatchedDate(m[0]);
     }
     return { caption: caption, ts: ts };
   }
 
   // Chemins à exclure : messages privés, demandes de suivi, journaux d'appels...
   // (tout ce qui n'est pas une publication faite sur le compte)
-  var EXCLUDED_PATH_RE = /messages|inbox|call_log|contacts|requests|pending|archived|recently_deleted/i;
+  // Liste blanche plutôt que liste noire : un export complet contient des dizaines de
+  // catégories (infos de compte, publicités, sécurité, messages, demandes...) qu'il serait
+  // vain d'essayer d'exclure une par une. On ne garde que ce qui est sûrement une publication.
+  var ALLOWED_PATH_RE = /your_instagram_activity\/media\/(posts(_\d+)?|reels)\.html$/i;
 
   function importInstagramZip(file, onProgress){
     return JSZip.loadAsync(file).then(function(zip){
@@ -1242,7 +1329,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         lowerIndex[relPath.toLowerCase()] = entry;
         var base = relPath.split("/").pop().toLowerCase();
         (baseNameIndex[base] = baseNameIndex[base] || []).push(entry);
-        if(/\.html?$/i.test(relPath) && !EXCLUDED_PATH_RE.test(relPath)) htmlEntries.push(entry);
+        if(ALLOWED_PATH_RE.test(relPath)) htmlEntries.push(entry);
+      });
+
+      // Quand un dossier contient à la fois "posts.html" et "posts_N.html", le second est
+      // un doublon partiel plus pauvre (pas de légende) du premier : on ne garde que posts.html.
+      var dirsWithPostsHtml = {};
+      htmlEntries.forEach(function(e){
+        if(/(^|\/)posts\.html$/i.test(e.name)){
+          dirsWithPostsHtml[e.name.slice(0, e.name.length - "posts.html".length)] = true;
+        }
+      });
+      htmlEntries = htmlEntries.filter(function(e){
+        var m = e.name.match(/^(.*\/)posts_\d+\.html$/i);
+        return !(m && dirsWithPostsHtml[m[1]]);
       });
 
       function findMediaEntry(basePath, src){
@@ -1253,35 +1353,79 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return (candidates && candidates.length) ? candidates[0] : null;
       }
 
+      // Extraction structurelle : un conteneur de post Meta se termine toujours par un
+      // <div> contenant la date, et sa légende (si présente) est dans une ligne de tableau
+      // dont le libellé exact est "Légende". Beaucoup plus fiable que d'aspirer tout le texte.
+      function extractStructural(container){
+        var caption = "";
+        var rows = container.querySelectorAll("tr");
+        for(var i = 0; i < rows.length; i++){
+          var cells = rows[i].children;
+          if(cells.length >= 2){
+            var label = (cells[0].textContent || "").trim();
+            if(/^l[ée]gende$/i.test(label)){
+              caption = (cells[1].textContent || "").trim();
+              break;
+            }
+          }
+        }
+        var ts = null;
+        var last = container.lastElementChild;
+        if(last){
+          var m = (last.textContent || "").trim().match(DATE_RE);
+          if(m) ts = parseMatchedDate(m[0]);
+        }
+        return { caption: caption, ts: ts };
+      }
+
       return Promise.all(htmlEntries.map(function(entry){
         return entry.async("string").then(function(htmlStr){
           var doc = new DOMParser().parseFromString(htmlStr, "text/html");
+          var main = doc.querySelector("main");
+          var topContainers = main ? Array.prototype.slice.call(main.children).filter(function(c){
+            return c.tagName === "DIV" && c.classList.contains("pam");
+          }) : [];
+
+          if(topContainers.length){
+            // Structure Meta reconnue : chaque conteneur de haut niveau est déjà un post entier.
+            return topContainers.map(function(container){
+              return { structural: true, container: container, basePath: entry.name };
+            });
+          }
+          // Repli : structure non reconnue, on revient à l'ancienne détection image par image.
           var els = Array.prototype.slice.call(doc.querySelectorAll("img[src], video[src], video source[src]"));
-          return els.map(function(el){ return { el: el, basePath: entry.name }; });
+          return els.map(function(el){ return { structural: false, el: el, basePath: entry.name }; });
         });
       })).then(function(groups){
-        var items = [].concat.apply([], groups);
+        var rawItems = [].concat.apply([], groups);
 
-        // Regroupe les médias qui partagent le même bloc légende/date en un seul post (carrousel).
-        // Plafonné à 10 médias par groupe : si la structure HTML est inhabituelle et regroupe
-        // trop d'éléments ensemble, on découpe plutôt que de créer un post géant qui bloquerait l'import.
         var MAX_GROUP_SIZE = 10;
         var postGroups = [];
-        var groupIndex = new Map();
-        items.forEach(function(item){
+        var fallbackIndex = new Map();
+
+        rawItems.forEach(function(item){
+          if(item.structural){
+            var mediaEls = Array.prototype.slice.call(item.container.querySelectorAll("img[src], video[src], video source[src]"));
+            postGroups.push({
+              mediaItems: mediaEls.map(function(el){ return { el: el, basePath: item.basePath }; }),
+              structuralContainer: item.container
+            });
+            return;
+          }
           var container = locateCaptionContainer(item.el);
-          var g = groupIndex.get(container);
-          if(!g || g.items.length >= MAX_GROUP_SIZE){
-            g = { container: container, items: [] };
-            groupIndex.set(container, g);
+          var g = fallbackIndex.get(container);
+          if(!g || g.mediaItems.length >= MAX_GROUP_SIZE){
+            g = { mediaItems: [], structuralContainer: null, fallbackContainer: container };
+            fallbackIndex.set(container, g);
             postGroups.push(g);
           }
-          g.items.push(item);
+          g.mediaItems.push(item);
         });
 
         var total = postGroups.length, imported = 0, skipped = 0, seen = {};
         var baseTs = Date.now();
-        var htmlFileCount = htmlEntries.length, mediaItemCount = items.length;
+        var htmlFileCount = htmlEntries.length;
+        var mediaItemCount = postGroups.reduce(function(n, g){ return n + g.mediaItems.length; }, 0);
 
         function nextGroup(i){
           // Petite pause régulière pour laisser Safari respirer (mémoire/rendu)
@@ -1299,7 +1443,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
           var mediaPromises;
           try {
-            mediaPromises = group.items.map(function(item){
+            mediaPromises = group.mediaItems.map(function(item){
               try {
                 var src = item.el.getAttribute("src");
                 var entry = src ? findMediaEntry(item.basePath, src) : null;
@@ -1334,7 +1478,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             var media = mediaResults.filter(Boolean);
             if(!media.length){ skipped++; return nextGroup(i); }
             var meta;
-            try { meta = extractTextAndDate(group.container); } catch(e){ meta = { caption: "", ts: null }; }
+            try {
+              meta = group.structuralContainer ? extractStructural(group.structuralContainer) : extractTextAndDate(group.fallbackContainer);
+            } catch(e){ meta = { caption: "", ts: null }; }
             var ts = meta.ts || (baseTs - (total - i) * 1000);
             return addPost("media", media, meta.caption, ts).then(function(){
               imported++;
@@ -1354,12 +1500,25 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   var progressFill = document.getElementById("progress-fill");
   var progressCount = document.getElementById("progress-count");
   var importIgInput = document.getElementById("import-ig-input");
+  var modalDiag = document.getElementById("modal-diag");
+  var diagSummary = document.getElementById("diag-summary");
+  var diagList = document.getElementById("diag-list");
+  var pendingIgFile = null;
 
-  document.getElementById("btn-import-ig-trigger").addEventListener("click", function(){ importIgInput.click(); });
+  function scanZipStructure(file){
+    return JSZip.loadAsync(file).then(function(zip){
+      var rows = [];
+      zip.forEach(function(relPath, entry){
+        if(entry.dir) return;
+        if(/\.html?$/i.test(relPath)){
+          rows.push({ path: relPath, excluded: !ALLOWED_PATH_RE.test(relPath) });
+        }
+      });
+      return rows;
+    });
+  }
 
-  importIgInput.addEventListener("change", function(){
-    var file = importIgInput.files[0];
-    if(!file) return;
+  function runImport(file){
     modalProgress.hidden = false;
     progressFill.style.width = "0%";
     progressCount.textContent = "Préparation…";
@@ -1386,8 +1545,49 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         alert("L'import s'est interrompu" + (detail ? " (" + detail + ")" : "") + "." + info);
       });
     });
+  }
+
+  document.getElementById("btn-import-ig-trigger").addEventListener("click", function(){ importIgInput.click(); });
+
+  importIgInput.addEventListener("change", function(){
+    var file = importIgInput.files[0];
+    if(!file) return;
+    pendingIgFile = file;
+    diagSummary.textContent = "Lecture du fichier…";
+    diagList.innerHTML = "";
+    modalDiag.hidden = false;
+
+    scanZipStructure(file).then(function(rows){
+      var includedCount = rows.filter(function(r){ return !r.excluded; }).length;
+      var excludedCount = rows.length - includedCount;
+      diagSummary.textContent = rows.length + " fichier(s) HTML trouvé(s) dans l'archive : " + includedCount + " seront analysés, " + excludedCount + " exclu(s) (messages, archives, etc.). Vérifie que ça correspond à ce que tu attends avant de continuer.";
+      if(!rows.length){
+        diagList.innerHTML = '<div class="diag-row"><span class="diag-path">Aucun fichier .html trouvé dans cette archive.</span></div>';
+      } else {
+        rows.forEach(function(r){
+          var row = document.createElement("div");
+          row.className = "diag-row " + (r.excluded ? "excluded" : "included");
+          row.innerHTML = '<span class="diag-path"></span><span class="diag-tag">' + (r.excluded ? "exclu" : "inclus") + '</span>';
+          row.querySelector(".diag-path").textContent = r.path;
+          diagList.appendChild(row);
+        });
+      }
+    }).catch(function(){
+      diagSummary.textContent = "Ce fichier n'a pas pu être lu comme une archive .zip valide.";
+    });
 
     importIgInput.value = "";
+  });
+
+  document.getElementById("btn-diag-cancel").addEventListener("click", function(){
+    modalDiag.hidden = true;
+    pendingIgFile = null;
+  });
+
+  document.getElementById("btn-diag-continue").addEventListener("click", function(){
+    modalDiag.hidden = true;
+    if(pendingIgFile) runImport(pendingIgFile);
+    pendingIgFile = null;
   });
 
   // ---------- Bio du profil ----------
