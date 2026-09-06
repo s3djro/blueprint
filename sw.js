@@ -5,7 +5,7 @@
 // ci-dessous (v1 -> v2 -> v3...) pour forcer le rechargement de la nouvelle
 // version. Sans ça, le service worker continuera de servir l'ancienne
 // version en cache indéfiniment.
-var CACHE_NAME = "blueprint-cache-v1";
+var CACHE_NAME = "blueprint-cache-v3";
 
 var ASSETS = [
   "./",
