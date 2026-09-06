@@ -514,10 +514,30 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function tx(mode){ return db.transaction(STORE, mode).objectStore(STORE); }
   function metaTx(mode){ return db.transaction(META_STORE, mode).objectStore(META_STORE); }
 
-  function addPost(type, blob, caption, ts){
+  var CHUNK_SIZE = 4 * 1024 * 1024; // 4 Mo par morceau
+
+  function sliceIntoChunks(blob){
+    var chunks = [], offset = 0;
+    while(offset < blob.size){
+      chunks.push(blob.slice(offset, offset + CHUNK_SIZE));
+      offset += CHUNK_SIZE;
+    }
+    return chunks;
+  }
+
+  // Les gros fichiers (vidéos surtout) sont découpés en morceaux avant stockage :
+  // Safari/iOS peut rester bloqué indéfiniment en tentant d'enregistrer un seul gros blob.
+  function toStorableMedia(item){
+    if(item.blob && item.blob.size > CHUNK_SIZE){
+      return { kind: item.kind, mime: item.blob.type, chunks: sliceIntoChunks(item.blob) };
+    }
+    return item;
+  }
+
+  function addPost(type, media, caption, ts){
     return new Promise(function(resolve, reject){
       var record = { type: type, caption: caption || "", ts: ts || Date.now(), fav:false };
-      if(type !== "text") record.image = blob;
+      if(type !== "text") record.media = (media || []).map(toStorableMedia);
       var req = tx("readwrite").add(record);
       req.onsuccess = function(){ resolve(); };
       req.onerror = reject;
@@ -604,11 +624,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return new Intl.DateTimeFormat("fr-FR", {day:"numeric", month:"long", year:"numeric", hour:"2-digit", minute:"2-digit"}).format(new Date(ts));
   }
 
-  // Compatibilité : anciens posts avec un seul champ "image" -> tableau media normalisé
+  // Compatibilité : anciens posts avec un seul champ "image" -> tableau media normalisé.
+  // Recompose aussi les fichiers qui avaient été découpés en morceaux au stockage.
   function getMediaArray(post){
-    if(post.media && post.media.length) return post.media;
-    if(post.image) return [{ blob: post.image, kind: "image" }];
-    return [];
+    var raw;
+    if(post.media && post.media.length) raw = post.media;
+    else if(post.image) raw = [{ blob: post.image, kind: "image" }];
+    else raw = [];
+
+    return raw.map(function(m){
+      if(m.chunks){
+        var mime = m.mime || (m.kind === "video" ? "video/mp4" : "image/jpeg");
+        return { kind: m.kind, blob: new Blob(m.chunks, { type: mime }) };
+      }
+      return m;
+    });
   }
 
   // Construit un carrousel (1 ou plusieurs médias). bare=true : sans cadre ni coins (vue détail).
@@ -920,18 +950,36 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     fileInput.value = "";
   });
 
+  function withTimeout(promise, ms){
+    return new Promise(function(resolve, reject){
+      var done = false;
+      var timer = setTimeout(function(){
+        if(!done){ done = true; reject(new Error("timeout")); }
+      }, ms);
+      promise.then(function(v){
+        if(!done){ done = true; clearTimeout(timer); resolve(v); }
+      }, function(e){
+        if(!done){ done = true; clearTimeout(timer); reject(e); }
+      });
+    });
+  }
+
   btnPublish.addEventListener("click", function(){
     if(newPostMode === "media" && !pendingMedia.length) return;
     if(newPostMode === "text" && !captionInput.value.trim()) return;
     btnPublish.disabled = true;
     var media = pendingMedia.map(function(m){ return { blob:m.blob, kind:m.kind }; });
-    addPost(newPostMode, newPostMode === "media" ? media : null, captionInput.value.trim()).then(function(){
-      closeNewSheet();
-      renderAll();
-    }).catch(function(){
-      alert("La publication a échoué. Le fichier est peut-être trop volumineux pour l'espace de stockage disponible — essaie avec une vidéo plus légère ou vérifie l'espace libre sur ton iPod.");
-      updatePublishState();
-    });
+    withTimeout(addPost(newPostMode, newPostMode === "media" ? media : null, captionInput.value.trim()), 45000)
+      .then(function(){
+        closeNewSheet();
+        renderAll();
+      }).catch(function(err){
+        var msg = (err && err.message === "timeout")
+          ? "L'enregistrement prend anormalement longtemps, probablement à cause d'un fichier vidéo trop volumineux pour cet iPod. Essaie avec une vidéo plus courte."
+          : "La publication a échoué. Le fichier est peut-être trop volumineux pour l'espace de stockage disponible — essaie avec une vidéo plus légère ou vérifie l'espace libre sur ton iPod.";
+        alert(msg);
+        updatePublishState();
+      });
   });
 
   // ---------- Détail / lightbox ----------
